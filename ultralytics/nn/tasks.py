@@ -10,6 +10,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from ultralytics.nn.modules.conv import CBAM
+
 from ultralytics.nn.autobackend import check_class_names
 from ultralytics.nn.modules import (
     AIFI,
@@ -1665,6 +1667,8 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
         }
     )
+    globals()["CBAM"] = CBAM
+
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
         m = (
             getattr(torch.nn, m[3:])
@@ -1673,6 +1677,8 @@ def parse_model(d, ch, verbose=True):
             if "torchvision.ops." in m
             else globals()[m]
         )  # get module
+        if m.__name__ == "CBAM":
+            args = [ch[f]] + args
         for j, a in enumerate(args):
             if isinstance(a, str):
                 with contextlib.suppress(ValueError):
