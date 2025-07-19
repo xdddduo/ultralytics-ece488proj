@@ -89,6 +89,14 @@ from .head import (
     YOLOESegment,
     v10Detect,
 )
+from .caries import (
+    XRayAttention,
+    MultiScaleFeatureFusion,
+    CariesSegment,
+    CariesLossWeighting,
+)
+
+globals()["CariesSegment"] = CariesSegment
 from .transformer import (
     AIFI,
     MLP,
@@ -179,4 +187,8 @@ __all__ = (
     "TorchVision",
     "Index",
     "A2C2f",
+    "XRayAttention",
+    "MultiScaleFeatureFusion",
+    "CariesSegment",
+    "CariesLossWeighting",
 )
