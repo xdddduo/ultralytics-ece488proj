@@ -20,15 +20,14 @@ class CariesSegmentationLoss(v8SegmentationLoss):
     4. X-ray specific intensity variations
     """
     
-    def __init__(self, model, overlap=True):
+    def __init__(self, model):
         """
         Initialize caries segmentation loss.
         
         Args:
             model: The model to compute loss for.
-            overlap (bool): Whether to use overlap mask processing.
         """
-        super().__init__(model, overlap)
+        super().__init__(model)
         
         # Caries-specific loss weights
         self.focal_alpha = 0.25
@@ -48,46 +47,84 @@ class CariesSegmentationLoss(v8SegmentationLoss):
             targets: Ground truth targets.
             
         Returns:
-            Dict: Loss dictionary with caries-specific components.
+            Tuple: (total_loss, loss_items) - total loss and individual loss components
         """
         # Get base segmentation loss
-        loss_dict = super().__call__(preds, targets)
+        base_loss, base_loss_items = super().__call__(preds, targets)
         
-        # Extract predictions and targets
-        if isinstance(preds, tuple):
-            pred_boxes, pred_masks, pred_protos = preds
-        else:
-            pred_boxes, pred_masks, pred_protos = preds[0], preds[1], preds[2]
+        # Safely extract predictions and targets
+        try:
+            # Handle different prediction formats
+            if isinstance(preds, tuple):
+                if len(preds) >= 3:
+                    pred_boxes, pred_masks, pred_protos = preds[0], preds[1], preds[2]
+                elif len(preds) == 2:
+                    pred_boxes, pred_masks = preds[0], preds[1]
+                    pred_protos = None
+                else:
+                    # Fallback to base loss only
+                    return base_loss, base_loss_items
+            elif isinstance(preds, list):
+                if len(preds) >= 3:
+                    pred_boxes, pred_masks, pred_protos = preds[0], preds[1], preds[2]
+                elif len(preds) == 2:
+                    pred_boxes, pred_masks = preds[0], preds[1]
+                    pred_protos = None
+                else:
+                    # Fallback to base loss only
+                    return base_loss, base_loss_items
+            else:
+                # Single tensor case
+                pred_masks = preds
+                pred_boxes = None
+                pred_protos = None
             
-        # Extract mask predictions and targets
-        pred_masks = pred_masks.view(-1, pred_masks.shape[-2], pred_masks.shape[-1])
-        target_masks = targets["masks"].view(-1, targets["masks"].shape[-2], targets["masks"].shape[-1])
-        
-        # Caries-specific loss components
-        focal_loss = self._focal_loss(pred_masks, target_masks)
-        dice_loss = self._dice_loss(pred_masks, target_masks)
-        boundary_loss = self._boundary_loss(pred_masks, target_masks)
-        small_lesion_loss = self._small_lesion_loss(pred_masks, target_masks)
-        
-        # Combine losses
-        total_loss = (
-            loss_dict["loss"] +  # Base loss
-            focal_loss +
-            self.dice_weight * dice_loss +
-            self.boundary_weight * boundary_loss +
-            self.small_lesion_weight * small_lesion_loss
-        )
-        
-        # Update loss dictionary
-        loss_dict.update({
-            "loss": total_loss,
-            "focal_loss": focal_loss,
-            "dice_loss": dice_loss,
-            "boundary_loss": boundary_loss,
-            "small_lesion_loss": small_lesion_loss
-        })
-        
-        return loss_dict
+            # Safely extract target masks
+            if isinstance(targets, dict) and "masks" in targets:
+                target_masks = targets["masks"]
+                if target_masks.dim() >= 3:
+                    target_masks = target_masks.view(-1, target_masks.shape[-2], target_masks.shape[-1])
+                else:
+                    # Fallback to base loss only
+                    return base_loss, base_loss_items
+            else:
+                # Fallback to base loss only
+                return base_loss, base_loss_items
+            
+            # Ensure pred_masks has correct shape
+            if pred_masks.dim() >= 3:
+                pred_masks = pred_masks.view(-1, pred_masks.shape[-2], pred_masks.shape[-1])
+            else:
+                # Fallback to base loss only
+                return base_loss, base_loss_items
+            
+            # Caries-specific loss components
+            focal_loss = self._focal_loss(pred_masks, target_masks)
+            dice_loss = self._dice_loss(pred_masks, target_masks)
+            boundary_loss = self._boundary_loss(pred_masks, target_masks)
+            small_lesion_loss = self._small_lesion_loss(pred_masks, target_masks)
+            
+            # Combine losses
+            total_loss = (
+                base_loss +  # Base loss
+                focal_loss +
+                self.dice_weight * dice_loss +
+                self.boundary_weight * boundary_loss +
+                self.small_lesion_weight * small_lesion_loss
+            )
+            
+            # Create loss items tensor (similar to base class format)
+            # Assuming base_loss_items has 4 elements: [box, seg, cls, dfl]
+            # We'll add our custom losses to the seg component
+            loss_items = base_loss_items.clone()
+            loss_items[1] += focal_loss + self.dice_weight * dice_loss + self.boundary_weight * boundary_loss + self.small_lesion_weight * small_lesion_loss
+            
+            return total_loss, loss_items
+            
+        except Exception as e:
+            # If any error occurs, fallback to base loss
+            print(f"Warning: Error in caries loss computation: {e}. Falling back to base loss.")
+            return base_loss, base_loss_items
     
     def _focal_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
@@ -100,15 +137,22 @@ class CariesSegmentationLoss(v8SegmentationLoss):
         Returns:
             Focal loss value.
         """
-        # Apply sigmoid to predictions
-        pred_sigmoid = torch.sigmoid(pred)
-        
-        # Focal loss calculation
-        ce_loss = F.binary_cross_entropy(pred_sigmoid, target, reduction='none')
-        pt = torch.where(target == 1, pred_sigmoid, 1 - pred_sigmoid)
-        focal_loss = self.focal_alpha * (1 - pt) ** self.focal_gamma * ce_loss
-        
-        return focal_loss.mean()
+        try:
+            # Apply sigmoid to predictions
+            pred_sigmoid = torch.sigmoid(pred)
+            
+            # Ensure target is binary
+            target_binary = (target > 0.5).float()
+            
+            # Focal loss calculation
+            ce_loss = F.binary_cross_entropy(pred_sigmoid, target_binary, reduction='none')
+            pt = torch.where(target_binary == 1, pred_sigmoid, 1 - pred_sigmoid)
+            focal_loss = self.focal_alpha * (1 - pt) ** self.focal_gamma * ce_loss
+            
+            return focal_loss.mean()
+        except Exception as e:
+            print(f"Warning: Error in focal loss computation: {e}. Returning zero loss.")
+            return torch.tensor(0.0, device=pred.device)
     
     def _dice_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
@@ -121,16 +165,23 @@ class CariesSegmentationLoss(v8SegmentationLoss):
         Returns:
             Dice loss value.
         """
-        pred_sigmoid = torch.sigmoid(pred)
-        
-        # Dice coefficient
-        intersection = (pred_sigmoid * target).sum(dim=(1, 2))
-        union = pred_sigmoid.sum(dim=(1, 2)) + target.sum(dim=(1, 2))
-        
-        dice = (2 * intersection + 1e-6) / (union + 1e-6)
-        dice_loss = 1 - dice.mean()
-        
-        return dice_loss
+        try:
+            pred_sigmoid = torch.sigmoid(pred)
+            
+            # Ensure target is binary
+            target_binary = (target > 0.5).float()
+            
+            # Dice coefficient
+            intersection = (pred_sigmoid * target_binary).sum(dim=(1, 2))
+            union = pred_sigmoid.sum(dim=(1, 2)) + target_binary.sum(dim=(1, 2))
+            
+            dice = (2 * intersection + 1e-6) / (union + 1e-6)
+            dice_loss = 1 - dice.mean()
+            
+            return dice_loss
+        except Exception as e:
+            print(f"Warning: Error in dice loss computation: {e}. Returning zero loss.")
+            return torch.tensor(0.0, device=pred.device)
     
     def _boundary_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """

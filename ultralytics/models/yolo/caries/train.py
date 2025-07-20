@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 from ultralytics.models import yolo
-from ultralytics.nn.tasks import SegmentationModel
+from ultralytics.nn.tasks import CariesSegmentationModel
 from ultralytics.utils import DEFAULT_CFG, RANK
 from ultralytics.utils.plotting import plot_results
 from ultralytics.utils.caries_loss import CariesSegmentationLoss
@@ -77,7 +77,7 @@ class CariesSegmentationTrainer(yolo.segment.SegmentationTrainer):
     
     def init_criterion(self):
         """Initialize the caries-specific loss criterion."""
-        return CariesSegmentationLoss(self.model, overlap=self.args.overlap_mask)
+        return CariesSegmentationLoss(self.model)
     
     def preprocess_batch(self, batch):
         """
@@ -172,58 +172,4 @@ class CariesSegmentationTrainer(yolo.segment.SegmentationTrainer):
         
         plt.tight_layout()
         plt.savefig(self.save_dir / 'caries_metrics.png')
-        plt.close()
-
-
-class CariesSegmentationModel(SegmentationModel):
-    """
-    Enhanced segmentation model specifically for caries detection.
-    
-    This model includes:
-    1. X-ray specific preprocessing layers
-    2. Enhanced feature extraction
-    3. Specialized loss computation
-    """
-    
-    def __init__(self, cfg="yolov8-caries-seg.yaml", ch=3, nc=None, verbose=True):
-        """
-        Initialize CariesSegmentationModel.
-        
-        Args:
-            cfg (str | dict): Model configuration.
-            ch (int): Number of input channels.
-            nc (int, optional): Number of classes.
-            verbose (bool): Whether to display model information.
-        """
-        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
-        
-        # Add X-ray preprocessing layer
-        self.xray_preprocessing = nn.Sequential(
-            nn.Conv2d(ch, ch, 3, 1, 1),
-            nn.BatchNorm2d(ch),
-            nn.ReLU(inplace=True)
-        )
-    
-    def forward(self, x, *args, **kwargs):
-        """
-        Forward pass with X-ray preprocessing.
-        
-        Args:
-            x: Input tensor.
-            *args: Additional arguments.
-            **kwargs: Additional keyword arguments.
-            
-        Returns:
-            Model output.
-        """
-        # Apply X-ray preprocessing
-        if isinstance(x, dict):
-            x["img"] = self.xray_preprocessing(x["img"])
-        else:
-            x = self.xray_preprocessing(x)
-        
-        return super().forward(x, *args, **kwargs)
-    
-    def init_criterion(self):
-        """Initialize caries-specific loss criterion."""
-        return CariesSegmentationLoss(self) 
+        plt.close() 

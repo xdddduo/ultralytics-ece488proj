@@ -575,6 +575,41 @@ class SegmentationModel(DetectionModel):
         return v8SegmentationLoss(self)
 
 
+class CariesSegmentationModel(SegmentationModel):
+    """
+    YOLO caries segmentation model.
+
+    This class extends SegmentationModel to handle caries detection in X-ray images, providing specialized
+    loss computation for dental caries segmentation.
+
+    Methods:
+        __init__: Initialize YOLO caries segmentation model.
+        init_criterion: Initialize the loss criterion for caries segmentation.
+
+    Examples:
+        Initialize a caries segmentation model
+        >>> model = CariesSegmentationModel("yolo11n-seg.yaml", ch=3, nc=1)
+        >>> results = model.predict(image_tensor)
+    """
+
+    def __init__(self, cfg="yolo11n-seg.yaml", ch=3, nc=None, verbose=True):
+        """
+        Initialize Ultralytics YOLO caries segmentation model with given config and parameters.
+
+        Args:
+            cfg (str | dict): Model configuration file path or dictionary.
+            ch (int): Number of input channels.
+            nc (int, optional): Number of classes (typically 1 for caries).
+            verbose (bool): Whether to display model information.
+        """
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+    def init_criterion(self):
+        """Initialize the loss criterion for the CariesSegmentationModel."""
+        from ultralytics.utils.caries_loss import CariesSegmentationLoss
+        return CariesSegmentationLoss(self)
+
+
 class PoseModel(DetectionModel):
     """
     YOLO pose model.
