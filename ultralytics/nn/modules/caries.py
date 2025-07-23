@@ -198,7 +198,7 @@ class CariesSegment(Segment):
             ) for x in ch
         ])
         
-    def forward(self, x: List[torch.Tensor]) -> torch.Tensor:
+    def forward(self, x: List[torch.Tensor]) -> Union[Tuple, List[torch.Tensor]]:
         # Apply edge enhancement
         enhanced_features = []
         for feat, edge_conv in zip(x, self.edge_enhancement):
@@ -223,8 +223,11 @@ class CariesSegment(Segment):
         
         if self.training:
             return detect_out, mc, p
-        # For non-training, mimic Segment: return only the tensor
-        return torch.cat([detect_out[0], mc], 1)
+        # For non-training, match Segment class return format exactly
+        if self.export:
+            return (torch.cat([detect_out, mc], 1), p)
+        else:
+            return (torch.cat([detect_out[0], mc], 1), (detect_out[1], mc, p))
 
 
 class CariesLossWeighting(nn.Module):
