@@ -1226,3 +1226,85 @@ class v10Detect(Detect):
     def fuse(self):
         """Remove the one2many head for inference optimization."""
         self.cv2 = self.cv3 = nn.ModuleList([nn.Identity()] * self.nl)
+
+
+# class CariesClassifier(nn.Module):
+#     def __init__(self, in_channels=1024):
+#         super().__init__()
+#         self.fc = nn.Sequential(
+#             nn.AdaptiveAvgPool2d(1),
+#             nn.Flatten(),
+#             nn.Linear(in_channels, 128),
+#             nn.ReLU(),
+#             nn.Linear(128, 1)  # binary output
+#         )
+#         self.f, self.i, self.type = -1, -1, "CariesClassifier"
+
+#     def forward(self, x):
+#         # Optionally: use ROIAlign to crop from feature_map
+#         # For now, just classify global features
+#         print(x[0].shape)
+#         return None
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision.ops import roi_align
+
+
+class CariesClassifier(nn.Module):
+    def __init__(self, in_channels=None, score_thresh=0.25, spatial_scale=1/32):
+        super().__init__()
+        self.i, self.f, self.type = -1, -1, "CariesClassifier"
+        self.score_thresh = score_thresh
+        self.spatial_scale = spatial_scale
+        self.in_channels = in_channels
+
+        self._head = None  # will initialize on first forward if in_channels is None
+
+    def _build_head(self, C, device='cpu'):
+        self._head = nn.Sequential(
+            nn.Conv2d(C, 128, 3, padding=1, device=device),
+            nn.ReLU(),
+            # nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(6272, 1, device=device),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        detections, features = x
+        B = detections.shape[0]
+        P5 = features[-1]
+
+        if self._head is None:
+            C = P5.shape[1]
+            self._build_head(C, device=P5.device)
+
+        all_preds = []
+        for b in range(B):
+            det = detections[b]
+            boxes = det[:, :4]
+            scores = det[:, 4]
+            keep = scores > self.score_thresh
+
+            if keep.sum() == 0:
+                all_preds.append(torch.empty((0, 1), device=detections.device))
+                continue
+
+            boxes = boxes[keep] * self.spatial_scale
+            indices = torch.full((boxes.shape[0], 1), b, device=detections.device)
+            rois = torch.cat([indices.float(), boxes], dim=1)
+
+            crops = roi_align(
+                input=P5,
+                boxes=rois,
+                output_size=(7, 7),
+                spatial_scale=self.spatial_scale,
+                aligned=True
+            )
+
+            preds = self._head(crops)
+            all_preds.append(preds)
+
+        return torch.cat(all_preds, dim=0) if all_preds else torch.empty((0, 1), device=detections.device)
